@@ -1,4 +1,4 @@
-name: Business Copilot Tests
+name: Business Copilot CI
 
 on:
   push:
@@ -30,3 +30,15 @@ jobs:
       - name: Run tests
         run: |
           python -m pytest
+
+  docker-build:
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: |
+          docker build -t business-copilot .
