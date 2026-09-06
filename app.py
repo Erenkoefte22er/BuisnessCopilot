@@ -1,18 +1,17 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 import pandas as pd
 import plotly.express as px
 import streamlit as st
 
+from services.analytics import (
+    calculate_business_kpis,
+    enrich_business_metrics,
+)
 from services.data_loader import (
     detect_date_columns,
     make_demo_data,
     read_uploaded_file,
-)
-
-from services.analytics import (
-    calculate_business_kpis,
-    enrich_business_metrics,
 )
 
 st.set_page_config(
@@ -230,10 +229,10 @@ def format_number(value: float) -> str:
 def transparent_chart(fig, height=390):
     fig.update_layout(
         height=height,
-        margin=dict(l=8, r=8, t=18, b=8),
+        margin={"l": 8, "r": 8, "t": 18, "b": 8},
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(color="#a7afbb"),
+        font={"color": "#a7afbb"},
         legend_title_text="",
     )
     fig.update_xaxes(gridcolor="rgba(255,255,255,0.05)", zeroline=False)
@@ -323,24 +322,23 @@ with left_head:
     st.markdown('<div class="eyebrow fade-up">Business intelligence platform</div>', unsafe_allow_html=True)
     st.markdown(f'<h1 class="page-title fade-up">{st.session_state.page}</h1>', unsafe_allow_html=True)
 
-with right_head:
-    with st.popover("Import data", use_container_width=True):
-        uploaded = st.file_uploader(
-            "CSV or Excel",
-            type=["csv", "xlsx"],
-            key="top_import",
-            help="CSV and XLSX are supported.",
-        )
-        if uploaded is not None:
-            try:
-                loaded = read_uploaded_file(uploaded.getvalue(), uploaded.name)
-                loaded.columns = [str(c).strip() for c in loaded.columns]
-                st.session_state.dataset = loaded
-                st.session_state.dataset_name = uploaded.name
-                st.session_state.dataset_source = "upload"
-                st.success("Dataset loaded.")
-            except Exception as exc:
-                st.error(str(exc))
+with right_head, st.popover("Import data", use_container_width=True):
+    uploaded = st.file_uploader(
+        "CSV or Excel",
+        type=["csv", "xlsx"],
+        key="top_import",
+        help="CSV and XLSX are supported.",
+    )
+    if uploaded is not None:
+        try:
+            loaded = read_uploaded_file(uploaded.getvalue(), uploaded.name)
+            loaded.columns = [str(c).strip() for c in loaded.columns]
+            st.session_state.dataset = loaded
+            st.session_state.dataset_name = uploaded.name
+            st.session_state.dataset_source = "upload"
+            st.success("Dataset loaded.")
+        except (ValueError, OSError) as exc:
+            st.error(str(exc))
 
 # ---------- Empty state ----------
 if st.session_state.dataset is None:
@@ -546,7 +544,11 @@ if st.session_state.page == "Overview":
         with chart_col:
             fig = px.bar(grouped_df.head(12), x="Total", y=dimension, orientation="h")
             fig = transparent_chart(fig, 390)
-            fig.update_layout(xaxis_title="", yaxis_title="", yaxis=dict(categoryorder="total ascending"))
+            fig.update_layout(
+        xaxis_title="",
+        yaxis_title="",
+        yaxis={"categoryorder": "total ascending"},
+        )
             st.plotly_chart(fig, use_container_width=True)
         with table_col:
             st.dataframe(grouped_df.head(12), use_container_width=True, hide_index=True, height=390)
@@ -623,6 +625,6 @@ else:
 # ---------- Footer ----------
 st.divider()
 st.markdown(
-    f'<div class="footer-note">Business Copilot prototype · Session generated {datetime.now().strftime("%d.%m.%Y")} · Legal notices available in the sidebar.</div>',
+    f'<div class="footer-note">Business Copilot prototype · Session generated {datetime.now(timezone.utc).strftime("%d.%m.%Y")} · Legal notices available in the sidebar.</div>',
     unsafe_allow_html=True,
 )

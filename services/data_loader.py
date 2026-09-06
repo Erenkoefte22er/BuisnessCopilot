@@ -3,13 +3,18 @@ import io
 import pandas as pd
 
 
-def read_uploaded_file(file_bytes: bytes, filename: str) -> pd.DataFrame:
-    """Load a CSV or Excel file into a pandas DataFrame."""
+def read_uploaded_file(
+    file_bytes: bytes,
+    filename: str,
+) -> pd.DataFrame:
+    """Read a CSV or Excel file into a pandas DataFrame."""
 
     filename = filename.lower()
 
     if filename.endswith(".xlsx"):
-        return pd.read_excel(io.BytesIO(file_bytes))
+        return pd.read_excel(
+            io.BytesIO(file_bytes)
+        )
 
     if filename.endswith(".csv"):
         encodings = (
@@ -28,16 +33,20 @@ def read_uploaded_file(file_bytes: bytes, filename: str) -> pd.DataFrame:
                     engine="python",
                 )
 
-            except (UnicodeDecodeError, pd.errors.ParserError):
+            except (
+                UnicodeDecodeError,
+                pd.errors.ParserError,
+            ):
                 continue
 
     raise ValueError(
-        "The file could not be read. Please use CSV or XLSX."
+        "The file could not be read. "
+        "Please use CSV or XLSX."
     )
 
 
 def make_demo_data() -> pd.DataFrame:
-    """Create demo business data for the example workspace."""
+    """Create demo business data for Business Copilot."""
 
     dates = pd.date_range(
         start="2026-01-01",
@@ -62,8 +71,13 @@ def make_demo_data() -> pd.DataFrame:
     rows = []
 
     for index, date in enumerate(dates):
-        product = products[index % len(products)]
-        region = regions[(index // 3) % len(regions)]
+        product = products[
+            index % len(products)
+        ]
+
+        region = regions[
+            (index // 3) % len(regions)
+        ]
 
         revenue = (
             620
@@ -83,7 +97,10 @@ def make_demo_data() -> pd.DataFrame:
                 "Region": region,
                 "Revenue": round(revenue, 2),
                 "Cost": round(cost, 2),
-                "Profit": round(revenue - cost, 2),
+                "Profit": round(
+                    revenue - cost,
+                    2,
+                ),
                 "Orders": 8 + (index % 13),
             }
         )
@@ -91,7 +108,9 @@ def make_demo_data() -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def detect_date_columns(dataframe: pd.DataFrame) -> list[str]:
+def detect_date_columns(
+    dataframe: pd.DataFrame,
+) -> list[str]:
     """Detect columns that most likely contain dates."""
 
     candidates = []
@@ -109,27 +128,46 @@ def detect_date_columns(dataframe: pd.DataFrame) -> list[str]:
 
     for column in dataframe.columns:
         column_name = str(column).lower()
+        series = dataframe[column]
 
+        # Column already contains datetime values.
         if pd.api.types.is_datetime64_any_dtype(
-            dataframe[column]
+            series
         ):
             candidates.append(column)
             continue
 
+        # Only inspect text columns whose names
+        # suggest that they contain dates.
+        if not any(
+            keyword in column_name
+            for keyword in date_keywords
+        ):
+            continue
+
         if (
-            dataframe[column].dtype == "object"
-            and any(
-                keyword in column_name
-                for keyword in date_keywords
-            )
+            pd.api.types.is_string_dtype(series)
+            or series.dtype == "object"
         ):
             parsed = pd.to_datetime(
-                dataframe[column],
+                series,
                 errors="coerce",
                 dayfirst=True,
+                format="mixed",
             )
 
-            if parsed.notna().mean() >= 0.65:
+            valid_ratio = (
+                parsed.notna().mean()
+            )
+
+            if valid_ratio >= 0.65:
                 candidates.append(column)
 
     return candidates
+
+
+
+
+
+
+

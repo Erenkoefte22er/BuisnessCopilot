@@ -129,7 +129,7 @@ def test_zero_revenue_does_not_break_margin():
         }
     )
 
-    result, columns = enrich_business_metrics(data)
+    result, _ = enrich_business_metrics(data)
 
     assert "Profit Margin %" in result.columns
     assert pd.isna(result["Profit Margin %"].iloc[0])
