@@ -1,9 +1,14 @@
-import io
 from datetime import datetime
 
 import pandas as pd
 import plotly.express as px
 import streamlit as st
+
+from services.data_loader import (
+    detect_date_columns,
+    make_demo_data,
+    read_uploaded_file,
+)
 
 st.set_page_config(
     page_title="Business Copilot",
@@ -205,65 +210,8 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# ---------- Data functions ----------
-@st.cache_data
-def read_uploaded_file(file_bytes: bytes, filename: str) -> pd.DataFrame:
-    lower = filename.lower()
-    if lower.endswith(".xlsx"):
-        return pd.read_excel(io.BytesIO(file_bytes))
-    if lower.endswith(".csv"):
-        for encoding in ("utf-8", "utf-8-sig", "latin1"):
-            try:
-                text = file_bytes.decode(encoding)
-                return pd.read_csv(io.StringIO(text), sep=None, engine="python")
-            except Exception:
-                continue
-    raise ValueError("Die Datei konnte nicht gelesen werden. Nutze CSV oder XLSX.")
-
-
-def make_demo_data() -> pd.DataFrame:
-    dates = pd.date_range("2026-01-01", periods=120, freq="D")
-    products = ["Analytics Pro", "Finance Hub", "Sales Desk", "Ops Suite"]
-    regions = ["DACH", "North", "West", "South"]
-    rows = []
-    for i, date in enumerate(dates):
-        product = products[i % len(products)]
-        region = regions[(i // 3) % len(regions)]
-        revenue = 620 + (i % 17) * 48 + (i // 30) * 95
-        cost = revenue * (0.52 + ((i % 5) * 0.025))
-        rows.append(
-            {
-                "Date": date,
-                "Product": product,
-                "Region": region,
-                "Revenue": round(revenue, 2),
-                "Cost": round(cost, 2),
-                "Profit": round(revenue - cost, 2),
-                "Orders": 8 + (i % 13),
-            }
-        )
-    return pd.DataFrame(rows)
-
-
-def detect_date_columns(df: pd.DataFrame) -> list[str]:
-    candidates = []
-    date_words = ("date", "datum", "time", "zeit", "month", "monat", "day", "tag")
-    for column in df.columns:
-        name = str(column).lower()
-        if pd.api.types.is_datetime64_any_dtype(df[column]):
-            candidates.append(column)
-            continue
-        if df[column].dtype == "object" and any(word in name for word in date_words):
-            parsed = pd.to_datetime(df[column], errors="coerce", dayfirst=True)
-            if parsed.notna().mean() >= 0.65:
-                candidates.append(column)
-    return candidates
+# ---------- Business metric helpers ----------
 def normalize_column_name(name: str) -> str:
-    """
-    Vereinheitlicht Spaltennamen, damit beispielsweise
-    'Unit Price', 'unit_price' und 'UNIT PRICE'
-    ähnlich behandelt werden können.
-    """
     return "".join(
         character.lower()
         for character in str(name)
@@ -272,10 +220,6 @@ def normalize_column_name(name: str) -> str:
 
 
 def find_business_column(df: pd.DataFrame, aliases: list[str]):
-    """
-    Sucht eine Spalte anhand typischer deutscher
-    und englischer Bezeichnungen.
-    """
     normalized_columns = {
         normalize_column_name(column): column
         for column in df.columns
@@ -283,7 +227,6 @@ def find_business_column(df: pd.DataFrame, aliases: list[str]):
 
     for alias in aliases:
         normalized_alias = normalize_column_name(alias)
-
         if normalized_alias in normalized_columns:
             return normalized_columns[normalized_alias]
 
@@ -291,153 +234,66 @@ def find_business_column(df: pd.DataFrame, aliases: list[str]):
 
 
 def enrich_business_metrics(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
-    """
-    Erkennt typische Unternehmenskennzahlen und berechnet
-    fehlende Werte, wenn genügend Informationen vorhanden sind.
-    """
-
     result = df.copy()
 
     detected = {
         "revenue": find_business_column(
             result,
-            [
-                "Revenue",
-                "Umsatz",
-                "Sales Revenue",
-                "Turnover",
-                "Erlös",
-                "Erlöse",
-            ],
+            ["Revenue", "Umsatz", "Sales Revenue", "Turnover", "Erlös", "Erlöse"],
         ),
-
         "cost": find_business_column(
             result,
-            [
-                "Cost",
-                "Costs",
-                "Kosten",
-                "Expenses",
-                "Aufwand",
-            ],
+            ["Cost", "Costs", "Kosten", "Expenses", "Aufwand"],
         ),
-
         "profit": find_business_column(
             result,
-            [
-                "Profit",
-                "Gewinn",
-                "Operating Profit",
-                "Ergebnis",
-            ],
+            ["Profit", "Gewinn", "Operating Profit", "Ergebnis"],
         ),
-
         "price": find_business_column(
             result,
-            [
-                "Price",
-                "Preis",
-                "Unit Price",
-                "Stückpreis",
-                "Stueckpreis",
-                "Verkaufspreis",
-            ],
+            ["Price", "Preis", "Unit Price", "Stückpreis", "Stueckpreis", "Verkaufspreis"],
         ),
-
         "quantity": find_business_column(
             result,
-            [
-                "Quantity",
-                "Menge",
-                "Qty",
-                "Units",
-                "Stückzahl",
-                "Stueckzahl",
-            ],
+            ["Quantity", "Menge", "Qty", "Units", "Stückzahl", "Stueckzahl"],
         ),
-
         "orders": find_business_column(
             result,
-            [
-                "Orders",
-                "Bestellungen",
-                "Order Count",
-                "Anzahl Bestellungen",
-            ],
+            ["Orders", "Bestellungen", "Order Count", "Anzahl Bestellungen"],
         ),
     }
 
-    # Umsatz automatisch berechnen:
-    # Preis × Menge
     if (
         detected["revenue"] is None
         and detected["price"] is not None
         and detected["quantity"] is not None
     ):
         result["Revenue"] = (
-            pd.to_numeric(
-                result[detected["price"]],
-                errors="coerce",
-            )
-            *
-            pd.to_numeric(
-                result[detected["quantity"]],
-                errors="coerce",
-            )
+            pd.to_numeric(result[detected["price"]], errors="coerce")
+            * pd.to_numeric(result[detected["quantity"]], errors="coerce")
         )
-
         detected["revenue"] = "Revenue"
 
-    # Gewinn automatisch berechnen:
-    # Umsatz - Kosten
     if (
         detected["profit"] is None
         and detected["revenue"] is not None
         and detected["cost"] is not None
     ):
         result["Profit"] = (
-            pd.to_numeric(
-                result[detected["revenue"]],
-                errors="coerce",
-            )
-            -
-            pd.to_numeric(
-                result[detected["cost"]],
-                errors="coerce",
-            )
+            pd.to_numeric(result[detected["revenue"]], errors="coerce")
+            - pd.to_numeric(result[detected["cost"]], errors="coerce")
         )
-
         detected["profit"] = "Profit"
 
-    # Gewinnmarge automatisch berechnen
-    if (
-        detected["revenue"] is not None
-        and detected["profit"] is not None
-    ):
-        revenue = pd.to_numeric(
-            result[detected["revenue"]],
-            errors="coerce",
-        )
-
-        profit = pd.to_numeric(
-            result[detected["profit"]],
-            errors="coerce",
-        )
-
-        result["Profit Margin %"] = (
-            profit.div(
-                revenue.where(revenue != 0)
-            )
-            * 100
-        )
-
+    if detected["revenue"] is not None and detected["profit"] is not None:
+        revenue = pd.to_numeric(result[detected["revenue"]], errors="coerce")
+        profit = pd.to_numeric(result[detected["profit"]], errors="coerce")
+        result["Profit Margin %"] = profit.div(revenue.where(revenue != 0)) * 100
         detected["margin"] = "Profit Margin %"
-
     else:
         detected["margin"] = None
 
     return result, detected
-
 
 
 def format_number(value: float) -> str:
@@ -608,6 +464,7 @@ if st.session_state.dataset is None:
 # ---------- Dataset setup ----------
 df = st.session_state.dataset.copy()
 df, business_columns = enrich_business_metrics(df)
+
 if df.empty:
     st.warning("The active dataset does not contain any rows.")
     st.stop()
@@ -813,4 +670,3 @@ st.markdown(
     f'<div class="footer-note">Business Copilot prototype · Session generated {datetime.now().strftime("%d.%m.%Y")} · Legal notices available in the sidebar.</div>',
     unsafe_allow_html=True,
 )
-
