@@ -10,6 +10,11 @@ from services.data_loader import (
     read_uploaded_file,
 )
 
+from services.analytics import (
+    calculate_business_kpis,
+    enrich_business_metrics,
+)
+
 st.set_page_config(
     page_title="Business Copilot",
     page_icon="BC",
@@ -210,92 +215,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# ---------- Business metric helpers ----------
-def normalize_column_name(name: str) -> str:
-    return "".join(
-        character.lower()
-        for character in str(name)
-        if character.isalnum()
-    )
-
-
-def find_business_column(df: pd.DataFrame, aliases: list[str]):
-    normalized_columns = {
-        normalize_column_name(column): column
-        for column in df.columns
-    }
-
-    for alias in aliases:
-        normalized_alias = normalize_column_name(alias)
-        if normalized_alias in normalized_columns:
-            return normalized_columns[normalized_alias]
-
-    return None
-
-
-def enrich_business_metrics(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
-    result = df.copy()
-
-    detected = {
-        "revenue": find_business_column(
-            result,
-            ["Revenue", "Umsatz", "Sales Revenue", "Turnover", "Erlös", "Erlöse"],
-        ),
-        "cost": find_business_column(
-            result,
-            ["Cost", "Costs", "Kosten", "Expenses", "Aufwand"],
-        ),
-        "profit": find_business_column(
-            result,
-            ["Profit", "Gewinn", "Operating Profit", "Ergebnis"],
-        ),
-        "price": find_business_column(
-            result,
-            ["Price", "Preis", "Unit Price", "Stückpreis", "Stueckpreis", "Verkaufspreis"],
-        ),
-        "quantity": find_business_column(
-            result,
-            ["Quantity", "Menge", "Qty", "Units", "Stückzahl", "Stueckzahl"],
-        ),
-        "orders": find_business_column(
-            result,
-            ["Orders", "Bestellungen", "Order Count", "Anzahl Bestellungen"],
-        ),
-    }
-
-    if (
-        detected["revenue"] is None
-        and detected["price"] is not None
-        and detected["quantity"] is not None
-    ):
-        result["Revenue"] = (
-            pd.to_numeric(result[detected["price"]], errors="coerce")
-            * pd.to_numeric(result[detected["quantity"]], errors="coerce")
-        )
-        detected["revenue"] = "Revenue"
-
-    if (
-        detected["profit"] is None
-        and detected["revenue"] is not None
-        and detected["cost"] is not None
-    ):
-        result["Profit"] = (
-            pd.to_numeric(result[detected["revenue"]], errors="coerce")
-            - pd.to_numeric(result[detected["cost"]], errors="coerce")
-        )
-        detected["profit"] = "Profit"
-
-    if detected["revenue"] is not None and detected["profit"] is not None:
-        revenue = pd.to_numeric(result[detected["revenue"]], errors="coerce")
-        profit = pd.to_numeric(result[detected["profit"]], errors="coerce")
-        result["Profit Margin %"] = profit.div(revenue.where(revenue != 0)) * 100
-        detected["margin"] = "Profit Margin %"
-    else:
-        detected["margin"] = None
-
-    return result, detected
-
-
+# ---------- Presentation helpers ----------
 def format_number(value: float) -> str:
     if pd.isna(value):
         return "–"
@@ -516,22 +436,50 @@ if st.session_state.page == "Overview":
     total = series.sum()
     average = series.mean()
     maximum = series.max()
+    business_kpis = calculate_business_kpis(filtered_df, business_columns)
+
+    management_cards = []
+    if "revenue" in business_kpis:
+        management_cards.append(("Revenue", format_number(business_kpis["revenue"]), "Revenue"))
+    if "cost" in business_kpis:
+        management_cards.append(("Costs", format_number(business_kpis["cost"]), "Costs"))
+    if "profit" in business_kpis:
+        management_cards.append(("Profit", format_number(business_kpis["profit"]), "Profit"))
+    if "margin" in business_kpis:
+        management_cards.append(("Margin", f'{business_kpis["margin"]:.1f}%', "Margin"))
 
     st.markdown('<div class="section-title">Key metrics</div><div class="section-subtitle">Select a metric card to open its detail view.</div>', unsafe_allow_html=True)
     st.markdown('<div class="kpi-row">', unsafe_allow_html=True)
-    k1, k2, k3, k4 = st.columns(4)
-    with k1:
-        if st.button(f"TOTAL\n{format_number(total)}", key="kpi_total", use_container_width=True):
-            st.session_state.selected_kpi = "Total"
-    with k2:
-        if st.button(f"AVERAGE\n{format_number(average)}", key="kpi_average", use_container_width=True):
-            st.session_state.selected_kpi = "Average"
-    with k3:
-        if st.button(f"MAXIMUM\n{format_number(maximum)}", key="kpi_maximum", use_container_width=True):
-            st.session_state.selected_kpi = "Maximum"
-    with k4:
-        if st.button(f"RECORDS\n{len(filtered_df):,}", key="kpi_records", use_container_width=True):
-            st.session_state.selected_kpi = "Records"
+
+    if len(management_cards) >= 3:
+        visible_cards = management_cards[:4]
+        if st.session_state.selected_kpi not in [card[2] for card in visible_cards]:
+            st.session_state.selected_kpi = visible_cards[0][2]
+
+        columns = st.columns(len(visible_cards))
+        for column, (label, value, state_name) in zip(columns, visible_cards):
+            with column:
+                if st.button(
+                    f"{label.upper()}\n{value}",
+                    key=f"kpi_{state_name.lower()}",
+                    use_container_width=True,
+                ):
+                    st.session_state.selected_kpi = state_name
+    else:
+        k1, k2, k3, k4 = st.columns(4)
+        with k1:
+            if st.button(f"TOTAL\n{format_number(total)}", key="kpi_total", use_container_width=True):
+                st.session_state.selected_kpi = "Total"
+        with k2:
+            if st.button(f"AVERAGE\n{format_number(average)}", key="kpi_average", use_container_width=True):
+                st.session_state.selected_kpi = "Average"
+        with k3:
+            if st.button(f"MAXIMUM\n{format_number(maximum)}", key="kpi_maximum", use_container_width=True):
+                st.session_state.selected_kpi = "Maximum"
+        with k4:
+            if st.button(f"RECORDS\n{len(filtered_df):,}", key="kpi_records", use_container_width=True):
+                st.session_state.selected_kpi = "Records"
+
     st.markdown('</div>', unsafe_allow_html=True)
 
     detail_left, detail_right = st.columns([1.65, 1])
@@ -556,7 +504,15 @@ if st.session_state.page == "Overview":
     with detail_right:
         st.markdown('<div class="section-title">Current selection</div><div class="section-subtitle">A compact explanation of the selected KPI.</div>', unsafe_allow_html=True)
         selected_kpi = st.session_state.selected_kpi
-        if selected_kpi == "Total":
+        if selected_kpi == "Revenue" and "revenue" in business_kpis:
+            text = f"Revenue totals {format_number(business_kpis['revenue'])} across the current selection."
+        elif selected_kpi == "Costs" and "cost" in business_kpis:
+            text = f"Costs total {format_number(business_kpis['cost'])} across the current selection."
+        elif selected_kpi == "Profit" and "profit" in business_kpis:
+            text = f"Profit totals {format_number(business_kpis['profit'])} across the current selection."
+        elif selected_kpi == "Margin" and "margin" in business_kpis:
+            text = f"The current profit margin is {business_kpis['margin']:.1f}%."
+        elif selected_kpi == "Total":
             text = f"{metric} totals {format_number(total)} across the current selection."
         elif selected_kpi == "Average":
             text = f"The average {metric} value is {format_number(average)}."
